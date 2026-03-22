@@ -1,0 +1,5 @@
+{
+  "name": "Multiviewer Remote",
+  "description": "A remote application to act as a controller for Multiviewer, showing additional data including Leaderboard, Position Changes, Tire Details, Race Control Messages and Race Status.",
+  "requestFramePermissions": []
+}

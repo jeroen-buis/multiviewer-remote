@@ -1,0 +1,146 @@
+[
+  {
+    "Key": "63",
+    "Name": "Bahrain",
+    "PitstopDuration": 24.5,
+    "EffectivePitDuration": 24.5
+  },
+  {
+    "Key": "149",
+    "Name": "Saudi Arabia (Jeddah)",
+    "PitstopDuration": 20.7,
+    "EffectivePitDuration": 20.7
+  },
+  {
+    "Key": "10",
+    "Name": "Australia (Melbourne)",
+    "PitstopDuration": 18.0,
+    "EffectivePitDuration": 18.0
+  },
+  {
+    "Key": "46",
+    "Name": "Japan (Suzuka)",
+    "PitstopDuration": 22.2,
+    "EffectivePitDuration": 22.2
+  },
+  {
+    "Key": "49",
+    "Name": "China (Shanghai)",
+    "PitstopDuration": 23.1,
+    "EffectivePitDuration": 23.1
+  },
+  {
+    "Key": "151",
+    "Name": "Miami",
+    "PitstopDuration": 22.8,
+    "EffectivePitDuration": 22.8
+  },
+  {
+    "Key": "6",
+    "Name": "Emilia-Romagna (Imola)",
+    "PitstopDuration": 28.2,
+    "EffectivePitDuration": 26.7
+  },
+  {
+    "Key": "22",
+    "Name": "Monaco",
+    "PitstopDuration": 19.2,
+    "EffectivePitDuration": 20.2
+  },
+  {
+    "Key": "23",
+    "Name": "Canada (Montreal)",
+    "PitstopDuration": 23.4,
+    "EffectivePitDuration": 19.4
+  },
+  {
+    "Key": "15",
+    "Name": "Spain (Barcelona)",
+    "PitstopDuration": 21.9,
+    "EffectivePitDuration": 21.9
+  },
+  {
+    "Key": "19",
+    "Name": "Austria (Red Bull Ring)",
+    "PitstopDuration": 22.5,
+    "EffectivePitDuration": 20.5
+  },
+  {
+    "Key": "2",
+    "Name": "Great Britain (Silverstone)",
+    "PitstopDuration": 28.9,
+    "EffectivePitDuration": 30.5
+  },
+  {
+    "Key": "4",
+    "Name": "Hungary (Hungaroring)",
+    "PitstopDuration": 22.0,
+    "EffectivePitDuration": 22.0
+  },
+  {
+    "Key": "7",
+    "Name": "Belgium (Spa)",
+    "PitstopDuration": 23.8,
+    "EffectivePitDuration": 23.8
+  },
+  {
+    "Key": "55",
+    "Name": "Netherlands (Zandvoort)",
+    "PitstopDuration": 18.5,
+    "EffectivePitDuration": 18.5
+  },
+  {
+    "Key": "39",
+    "Name": "Italy (Monza)",
+    "PitstopDuration": 24.6,
+    "EffectivePitDuration": 24.6
+  },
+  {
+    "Key": "144",
+    "Name": "Azerbaijan (Baku)",
+    "PitstopDuration": 21.1,
+    "EffectivePitDuration": 21.1
+  },
+  {
+    "Key": "61",
+    "Name": "Singapore",
+    "PitstopDuration": 30.0,
+    "EffectivePitDuration": 32.0
+  },
+  {
+    "Key": "9",
+    "Name": "United States (COTA)",
+    "PitstopDuration": 24.1,
+    "EffectivePitDuration": 24.1
+  },
+  {
+    "Key": "65",
+    "Name": "Mexico City",
+    "PitstopDuration": 22.6,
+    "EffectivePitDuration": 24.1
+  },
+  {
+    "Key": "14",
+    "Name": "Brazil (Sao Paulo)",
+    "PitstopDuration": 25.4,
+    "EffectivePitDuration": 22.9
+  },
+  {
+    "Key": "152",
+    "Name": "Las Vegas",
+    "PitstopDuration": 21.8,
+    "EffectivePitDuration": 21.8
+  },
+  {
+    "Key": "150",
+    "Name": "Qatar (Lusail)",
+    "PitstopDuration": 23.5,
+    "EffectivePitDuration": 23.5
+  },
+  {
+    "Key": "70",
+    "Name": "Abu Dhabi (Yas Marina)",
+    "PitstopDuration": 22.3,
+    "EffectivePitDuration": 22.3
+  }
+]
