@@ -195,6 +195,11 @@ const GettingStartedTab: React.FC = () => {
 const ReleaseNotesTab: React.FC = () => (
     <>
         <h2>Release Notes</h2>
+        <h3>Version 1.5</h3>
+        <ul>
+            <li><strong>Bug Fix:</strong> Fixed an issue where the app could show a blank screen after a new version was deployed, particularly on Android Chrome. The service worker now always fetches the latest app shell when online, and old caches are automatically cleared on update so a stuck device unsticks itself on the next reload.</li>
+        </ul>
+        <hr />
         <h3>Version 1.4</h3>
         <ul>
             <li><strong>New Feature:</strong> Introduced the Weather screen, providing real-time weather data throughout the session. Includes a combined Air and Track temperature chart, wind speed, rainfall detection, humidity, and atmospheric pressure &mdash; all plotted over time with a race start marker.</li>

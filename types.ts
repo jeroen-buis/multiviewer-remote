@@ -221,3 +221,8 @@ export interface PitstopData {
   PitstopDuration: number;
   EffectivePitDuration: number;
 }
+
+declare global {
+  const __APP_VERSION__: string;
+}
+

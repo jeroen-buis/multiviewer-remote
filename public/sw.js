@@ -1,80 +1,63 @@
-const CACHE_NAME = 'multiviewer-remote-cache-v1.4';
-const urlsToCache = [
-  '/',
-  '/index.html',
-  '/index.css'
-];
+// __APP_BUILD_ID__ is replaced at build time by the inject-sw-version Vite plugin.
+// In dev, it stays literal — that's fine, the dev server doesn't deploy the SW.
+const CACHE_PREFIX = 'multiviewer-remote-cache-';
+const CACHE_NAME = `${CACHE_PREFIX}__APP_BUILD_ID__`;
+const PRECACHE_URLS = ['/', '/index.html'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Opened cache');
-        // Don't cache the main JS bundle, let the browser handle it.
-        return cache.addAll(urlsToCache);
-      })
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
   );
-  // Activate new service worker immediately instead of waiting for all tabs to close
   self.skipWaiting();
 });
 
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((names) =>
+      Promise.all(
+        names
+          .filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
+          .map((name) => caches.delete(name))
+      )
+    )
+  );
+  self.clients.claim();
+});
 
-  // If the request is for our API, do not handle it with the service worker.
-  // Let it pass through to the browser's normal network stack.
-  if (url.pathname.includes('/api/graphql')) {
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+
+  // Pass GraphQL through to the network stack untouched.
+  if (url.pathname.includes('/api/graphql')) return;
+
+  const accept = request.headers.get('accept') || '';
+  const isNavigation = request.mode === 'navigate' || accept.includes('text/html');
+
+  // Network-first for the HTML shell. Guarantees the served index.html always points at
+  // the current asset hashes — without this, a stale cached shell will reference a JS
+  // bundle that no longer exists on the server and the page renders blank.
+  if (isNavigation) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', clone));
+          return response;
+        })
+        .catch(() =>
+          caches.match('/index.html').then((cached) => cached || caches.match('/'))
+        )
+    );
     return;
   }
 
+  // Everything else: cache-first if we happened to precache it, otherwise straight to network.
+  // Vite emits content-hashed asset URLs, so they are safe to let the HTTP cache handle.
   event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        if (response) {
-          return response;
-        }
-        // For app shell files, fetch and cache.
-        return fetch(event.request).then(
-          (networkResponse) => {
-            // Check if we received a valid response
-            if(!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
-              return networkResponse;
-            }
-
-            // IMPORTANT: Clone the response. A response is a stream
-            // and because we want the browser to consume the response
-            // as well as the cache consuming the response, we need
-            // to clone it so we have two streams.
-            const responseToCache = networkResponse.clone();
-
-            caches.open(CACHE_NAME)
-              .then(cache => {
-                // We don't cache the main JS file to avoid the update issues.
-                if (urlsToCache.includes(url.pathname)) {
-                   cache.put(event.request, responseToCache);
-                }
-              });
-
-            return networkResponse;
-          }
-        );
-      })
+    caches.match(request).then((cached) => cached || fetch(request))
   );
-});
-
-self.addEventListener('activate', (event) => {
-  const cacheWhitelist = [CACHE_NAME];
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheWhitelist.indexOf(cacheName) === -1) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
-  // Take control of all open tabs immediately
-  self.clients.claim();
 });

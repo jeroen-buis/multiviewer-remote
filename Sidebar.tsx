@@ -245,7 +245,7 @@ const Sidebar: React.FC<SidebarProps> = ({ connectionStatus, onRetry, isEffectiv
           {isManuallyCollapsed ? expandIcon : collapseIcon}
         </button>
         <div className="sidebar-version">
-          v1.4
+          v{__APP_VERSION__.split('.').slice(0, 2).join('.')}
         </div>
       </div>
     </nav>
