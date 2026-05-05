@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import Sidebar from './Sidebar';
 import HomeScreen from './HomeScreen';
+import StandingsScreen from './StandingsScreen';
 import ControllerScreen from './ControllerScreen';
 import ControllerScreenMobile from './ControllerScreenMobile';
 import RaceScreen from './RaceScreen';
@@ -205,7 +206,7 @@ const AppContent: React.FC = () => {
 
 
   React.useEffect(() => {
-    const restrictedViews = ['controller', 'race', 'position', 'debug', 'tires', 'race-control', 'tire-stats', 'leaderboard', 'pitstops', 'weather'];
+    const restrictedViews = ['controller', 'race', 'position', 'debug', 'tires', 'race-control', 'tire-stats', 'leaderboard', 'standings', 'pitstops', 'weather'];
     if (connectionStatus !== 'connected' && restrictedViews.includes(activeView)) {
       setActiveView('home');
     }
@@ -236,13 +237,28 @@ const AppContent: React.FC = () => {
           systemInfoData={apiData.systemInfo}
           versionData={apiData.version}
         />;
-      case 'controller':
+      case 'controller': {
+         // Precompute a short-team-name → current-championship-position map. The keys in
+         // ChampionshipPrediction.Teams are the long constructor names (e.g. "McLaren Mercedes")
+         // while driver.TeamName is the short name (e.g. "McLaren"), so we have to match via
+         // the inner TeamName field.
+         const teams = apiData.f1LiveTimingState.data?.ChampionshipPrediction?.Teams;
+         let teamStandings: Record<string, number> | null = null;
+         if (teams) {
+            teamStandings = {};
+            Object.values(teams).forEach(t => {
+                teamStandings![t.TeamName] = t.CurrentPosition;
+            });
+         }
          const controllerProps = {
             ...mobileProps,
             playersData: apiData.players.data || [],
             driverListData: apiData.f1LiveTimingState.data?.DriverList || {},
+            timingData: apiData.f1LiveTimingState.data?.TimingData,
+            teamStandings,
         };
         return applyMobileMode ? <ControllerScreenMobile {...controllerProps} /> : <ControllerScreen {...controllerProps} />;
+      }
       case 'race':
         const raceProps = {
           ...mobileProps,
@@ -264,9 +280,11 @@ const AppContent: React.FC = () => {
             ...mobileProps,
             f1LiveTimingState: apiData.f1LiveTimingState,
         };
-        return applyMobileMode 
+        return applyMobileMode
             ? <LeaderboardScreenMobile {...leaderboardProps} />
             : <LeaderboardScreen {...leaderboardProps} />;
+      case 'standings':
+        return <StandingsScreen f1LiveTimingState={apiData.f1LiveTimingState} />;
       case 'tires':
         const tiresProps = {
             ...mobileProps,

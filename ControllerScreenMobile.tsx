@@ -1,9 +1,9 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Player, DriverList, LapCount, F1Driver } from './types';
-import { postMutation } from './api';
+import { Player, DriverList, LapCount, F1Driver, TimingData } from './types';
+import { postMutation, postMutationWithRetry } from './api';
 import { useStore } from './store';
-import { EnterFullscreenIcon, ExitFullscreenIcon, MutedIcon, UnmutedIcon, UserPlaceholderIcon, SyncIcon, PauseIcon, PlayIcon, SpeedometerIcon, HeaderIcon } from './components/controller/icons';
+import { EnterFullscreenIcon, ExitFullscreenIcon, MutedIcon, UnmutedIcon, UserPlaceholderIcon, SyncIcon, PauseIcon, PlayIcon } from './components/controller/icons';
 import SimpleHeader from './components/SimpleHeader';
 import Modal from './components/Modal';
 
@@ -26,6 +26,8 @@ const formatTime = (seconds: number) => {
 type ControllerScreenMobileProps = {
   playersData: Player[];
   driverListData: DriverList;
+  timingData?: TimingData | null;
+  teamStandings?: Record<string, number> | null;
   lapCount: LapCount | null;
   trackStatusInfo: { className: string; text: string; visible: boolean };
   drsStatus: 'ENABLED' | 'DISABLED' | string | null;
@@ -36,8 +38,8 @@ type ControllerScreenMobileProps = {
   multiviewerUrl: string;
 };
 
-const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ playersData, driverListData, lapCount, trackStatusInfo, drsStatus, sessionType, sessionName, sessionStatus, viewName, multiviewerUrl }) => {
-    const { isSpeedometerVisible, setIsSpeedometerVisible, driverHeaderMode, setDriverHeaderMode } = useStore();
+const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ playersData, driverListData, timingData, teamStandings, lapCount, trackStatusInfo, drsStatus, sessionType, sessionName, sessionStatus, viewName, multiviewerUrl }) => {
+    const { isSpeedometerVisible, driverHeaderMode } = useStore();
     const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
     const [isGloballyPaused, setIsGloballyPaused] = useState(false);
     const [activeOBCModalTab, setActiveOBCModalTab] = useState<'switch' | 'controls'>('switch');
@@ -58,7 +60,9 @@ const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ players
 
     const isLive = useMemo(() => {
         const mainFeed = playersData.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL');
-        return mainFeed ? mainFeed.state.live : false;
+        // Fail-closed: when no main feed is open we can't determine live vs. replay, so assume
+        // live and keep seek / master pause/play disabled.
+        return mainFeed ? mainFeed.state.live : true;
     }, [playersData]);
 
     useEffect(() => {
@@ -145,8 +149,10 @@ const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ players
     }, [modalVolume, isVolumeSliderActive, selectedPlayer, playerMutation]);
 
     const syncMutation = useMutation({
-        mutationFn: async () => {
-            const mainFeed = playersDataRef.current.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL');
+        mutationFn: async (options?: { enforceObcSettings?: boolean }) => {
+            const enforceObcSettings = options?.enforceObcSettings ?? true;
+            const players = playersDataRef.current;
+            const mainFeed = players.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL');
             if (!mainFeed) throw new Error("Main feed not found to sync to.");
 
             const result = await postMutation(
@@ -158,19 +164,25 @@ const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ players
             if (!result.playerSync) {
                 throw new Error('Sync operation failed, API returned false.');
             }
+
+            if (enforceObcSettings) {
+                const obcPlayers = players.filter(p => p.type === 'OBC');
+                if (obcPlayers.length > 0) {
+                    const idArgs = obcPlayers.map((_, i) => `$id${i}: ID!`).join(', ');
+                    const fields = obcPlayers.map((_, i) =>
+                        `s${i}: playerSetSpeedometerVisibility(id: $id${i}, visible: $visible)\n  h${i}: playerSetDriverHeaderMode(id: $id${i}, mode: $mode)`
+                    ).join('\n  ');
+                    const mutation = `mutation BulkEnforceObc($visible: Boolean!, $mode: DriverHeaderMode!, ${idArgs}) {\n  ${fields}\n}`;
+                    const variables: Record<string, unknown> = { visible: isSpeedometerVisible, mode: driverHeaderMode };
+                    obcPlayers.forEach((p, i) => { variables[`id${i}`] = p.id; });
+                    await postMutation(mutation, 'BulkEnforceObc', multiviewerUrl, variables);
+                }
+            }
+
             return result;
         },
         onSuccess: invalidateDynamicData,
         onError: (error) => console.error('Sync failed:', error),
-    });
-
-    const setPausedMutation = useMutation({
-        mutationFn: ({ playerId, paused }: { playerId: string; paused: boolean }) => postMutation(
-            `mutation PlayerSetPaused($id: ID!, $paused: Boolean) { playerSetPaused(id: $id, paused: $paused) }`,
-            'PlayerSetPaused',
-            multiviewerUrl,
-            { id: playerId, paused }
-        )
     });
 
     const handleToggleMasterPause = async () => {
@@ -180,49 +192,55 @@ const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ players
         const mainFeed = players.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL');
         const tracker = players.find(p => p.type === 'TRACKER' || p.streamData.title === 'TRACKER');
         const obcs = players.filter(p => p.type === 'OBC');
-        
-        const setPlayerPaused = (id: string, paused: boolean) => setPausedMutation.mutateAsync({ playerId: id, paused });
-        
+
+        const bulkPauseAndSync = async (orderedPlayers: Player[], syncToId: string) => {
+            if (orderedPlayers.length === 0) return;
+            const idArgs = orderedPlayers.map((_, i) => `$id${i}: ID!`).join(', ');
+            const fields = orderedPlayers.map((_, i) =>
+                `p${i}: playerSetPaused(id: $id${i}, paused: $paused)`
+            ).join('\n  ');
+            const mutation = `mutation BulkPauseAndSync($paused: Boolean!, $syncId: ID!, ${idArgs}) {\n  ${fields}\n  sync: playerSync(id: $syncId)\n}`;
+            const variables: Record<string, unknown> = { paused: true, syncId: syncToId };
+            orderedPlayers.forEach((p, i) => { variables[`id${i}`] = p.id; });
+            await postMutation(mutation, 'BulkPauseAndSync', multiviewerUrl, variables);
+        };
+
+        const bulkPlayAndSync = async (
+            orderedPlayers: Player[],
+            obcCount: number,
+            syncToId: string,
+            visible: boolean,
+            mode: 'OBC_LIVE_TIMING' | 'DRIVER_HEADER'
+        ) => {
+            if (orderedPlayers.length === 0) return;
+            const idArgs = orderedPlayers.map((_, i) => `$id${i}: ID!`).join(', ');
+            const playFields = orderedPlayers.map((_, i) =>
+                `p${i}: playerSetPaused(id: $id${i}, paused: $paused)`
+            ).join('\n  ');
+            const enforceFields = Array.from({ length: obcCount }, (_, i) =>
+                `s${i}: playerSetSpeedometerVisibility(id: $id${i}, visible: $visible)\n  h${i}: playerSetDriverHeaderMode(id: $id${i}, mode: $mode)`
+            ).join('\n  ');
+            const enforceBlock = enforceFields ? `\n  ${enforceFields}` : '';
+            const mutation = `mutation BulkPlayAndSync($paused: Boolean!, $syncId: ID!, $visible: Boolean!, $mode: DriverHeaderMode!, ${idArgs}) {\n  ${playFields}\n  sync: playerSync(id: $syncId)${enforceBlock}\n}`;
+            const variables: Record<string, unknown> = { paused: false, syncId: syncToId, visible, mode };
+            orderedPlayers.forEach((p, i) => { variables[`id${i}`] = p.id; });
+            await postMutation(mutation, 'BulkPlayAndSync', multiviewerUrl, variables);
+        };
+
         try {
+            if (!mainFeed) throw new Error("Main feed not found to sync to.");
             if (shouldPause) {
                 const pauseOrder = [mainFeed, tracker, ...obcs].filter(Boolean) as Player[];
-                for (const player of pauseOrder) await setPlayerPaused(player.id, true);
+                await bulkPauseAndSync(pauseOrder, mainFeed.id);
             } else {
                 const playOrder = [...obcs, tracker, mainFeed].filter(Boolean) as Player[];
-                for (const player of playOrder) await setPlayerPaused(player.id, false);
-                await syncMutation.mutateAsync();
+                await bulkPlayAndSync(playOrder, obcs.length, mainFeed.id, isSpeedometerVisible, driverHeaderMode);
             }
         } catch (error) {
             console.error('Master pause/play sequence failed:', error);
         } finally {
             invalidateDynamicData();
         }
-    };
-    
-    const handleToggleSpeedometer = () => {
-        const newVisibility = !isSpeedometerVisible;
-        const obcPlayers = playersDataRef.current.filter(p => p.type === 'OBC');
-        const promises = obcPlayers.map(p => playerMutation.mutateAsync({
-            mutation: `mutation PlayerSetSpeedometerVisibility($id: ID!, $visible: Boolean!) { playerSetSpeedometerVisibility(id: $id, visible: $visible) }`,
-            operationName: 'PlayerSetSpeedometerVisibility',
-            variables: { id: p.id, visible: newVisibility },
-        }));
-        Promise.all(promises).then(() => {
-            setIsSpeedometerVisible(newVisibility);
-        });
-    };
-
-    const handleToggleDriverHeaderMode = () => {
-        const newMode = driverHeaderMode === 'OBC_LIVE_TIMING' ? 'DRIVER_HEADER' : 'OBC_LIVE_TIMING';
-        const obcPlayers = playersDataRef.current.filter(p => p.type === 'OBC');
-        const promises = obcPlayers.map(p => playerMutation.mutateAsync({
-            mutation: `mutation PlayerSetDriverHeaderMode($id: ID!, $mode: DriverHeaderMode!) { playerSetDriverHeaderMode(id: $id, mode: $mode) }`,
-            operationName: 'PlayerSetDriverHeaderMode',
-            variables: { id: p.id, mode: newMode },
-        }));
-        Promise.all(promises).then(() => {
-            setDriverHeaderMode(newMode);
-        });
     };
     
     const filteredPlayersData = useMemo(() => {
@@ -234,17 +252,16 @@ const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ players
         }, {} as Record<string, Player[]>);
 
         const resolvedPlayers: Player[] = [];
-        // FIX: Cast Object.values to Player[][] to fix type inference on `group`.
         (Object.values(playersByBounds) as Player[][]).forEach(group => {
             if (group.length === 1) {
                 resolvedPlayers.push(group[0]);
             } else {
+                // Prefer alwaysOnTop, then the most recently created (last in API response).
+                // Picking group[0] before would surface the OLDEST player at the bounds, which
+                // causes a lag-by-one stale display after a driver switch when MV briefly
+                // returns both old and new players at the same coordinates.
                 const onTopPlayer = group.find(p => p.alwaysOnTop);
-                if (onTopPlayer) {
-                    resolvedPlayers.push(onTopPlayer);
-                } else {
-                    resolvedPlayers.push(group[0]);
-                }
+                resolvedPlayers.push(onTopPlayer || group[group.length - 1]);
             }
         });
 
@@ -275,15 +292,24 @@ const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ players
     };
 
     const handleSeek = async (playerId: string, relativeSeconds: number) => {
+        const syncId = playersDataRef.current.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL')?.id;
         try {
-            await postMutation(
-                `mutation PlayerSeekTo($id: ID!, $relative: Float) { playerSeekTo(id: $id, relative: $relative) }`,
-                'PlayerSeekTo',
-                multiviewerUrl,
-                { id: playerId, relative: relativeSeconds }
-            );
-            await new Promise(resolve => setTimeout(resolve, 500));
-            syncMutation.mutate();
+            if (syncId) {
+                await postMutation(
+                    `mutation SeekAndSync($id: ID!, $relative: Float, $syncId: ID!) {\n  seek: playerSeekTo(id: $id, relative: $relative)\n  sync: playerSync(id: $syncId)\n}`,
+                    'SeekAndSync',
+                    multiviewerUrl,
+                    { id: playerId, relative: relativeSeconds, syncId }
+                );
+            } else {
+                await postMutation(
+                    `mutation PlayerSeekTo($id: ID!, $relative: Float) { playerSeekTo(id: $id, relative: $relative) }`,
+                    'PlayerSeekTo',
+                    multiviewerUrl,
+                    { id: playerId, relative: relativeSeconds }
+                );
+            }
+            invalidateDynamicData();
         } catch (error) {
             console.error('Seek failed:', error);
         }
@@ -302,20 +328,56 @@ const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ players
             const createInput = { maintainAspectRatio: true, fullscreen: false, bounds: oldPlayer.bounds, alwaysOnTop: false, contentId: parseInt(oldPlayer.streamData.contentId, 10), driverTla: newDriverTla };
             const createResult = await postMutation(`mutation PlayerCreate($input: PlayerCreateInput!) { playerCreate(input: $input) }`, 'PlayerCreate', multiviewerUrl, { input: createInput });
             const newPlayerId = createResult.playerCreate;
-            
+
+            // Source-load warmup. PrepareDriverSwitch's `unpause` step calls MV's play()
+            // which errors with SOURCE_INVALID if load() hasn't resolved yet — so this can't
+            // safely drop below ~1000ms.
             await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            if (newPlayerId) {
-                if (isSpeedometerVisible) {
-                    await postMutation(`mutation PlayerSetSpeedometerVisibility($id: ID!, $visible: Boolean!) { playerSetSpeedometerVisibility(id: $id, visible: $visible) }`, 'PlayerSetSpeedometerVisibility', multiviewerUrl, { id: newPlayerId, visible: true });
-                }
-                await postMutation(`mutation PlayerSetDriverHeaderMode($id: ID!, $mode: DriverHeaderMode!) { playerSetDriverHeaderMode(id: $id, mode: $mode) }`, 'PlayerSetDriverHeaderMode', multiviewerUrl, { id: newPlayerId, mode: driverHeaderMode });
+
+            // Bundled prep: speedo + header + unpause(new) + sync + repause(new). The
+            // unpause/repause around the sync is the key to making this work when the session
+            // is paused — a freshly created paused player doesn't seem to receive playerSync
+            // properly in MultiViewer, so we briefly put it into a "playable" state, sync, and
+            // then restore the pause state to match the main feed.
+            const mainFeedSnapshot = playersDataRef.current.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL');
+            const syncId = mainFeedSnapshot?.id;
+            const finalPaused = mainFeedSnapshot?.state.paused ?? false;
+            if (newPlayerId && syncId) {
+                await postMutationWithRetry(
+                    `mutation PrepareDriverSwitch($newId: ID!, $visible: Boolean!, $mode: DriverHeaderMode!, $syncId: ID!, $finalPaused: Boolean!) {\n  speedo: playerSetSpeedometerVisibility(id: $newId, visible: $visible)\n  header: playerSetDriverHeaderMode(id: $newId, mode: $mode)\n  unpause: playerSetPaused(id: $newId, paused: false)\n  sync: playerSync(id: $syncId)\n  repause: playerSetPaused(id: $newId, paused: $finalPaused)\n}`,
+                    'PrepareDriverSwitch',
+                    multiviewerUrl,
+                    {
+                        newId: newPlayerId,
+                        visible: isSpeedometerVisible,
+                        mode: driverHeaderMode,
+                        syncId,
+                        finalPaused,
+                    }
+                );
+            } else if (newPlayerId) {
+                await postMutationWithRetry(
+                    `mutation PrepareDriverSwitchNoSync($newId: ID!, $visible: Boolean!, $mode: DriverHeaderMode!) {\n  speedo: playerSetSpeedometerVisibility(id: $newId, visible: $visible)\n  header: playerSetDriverHeaderMode(id: $newId, mode: $mode)\n}`,
+                    'PrepareDriverSwitchNoSync',
+                    multiviewerUrl,
+                    { newId: newPlayerId, visible: isSpeedometerVisible, mode: driverHeaderMode }
+                );
             }
-            
-            await syncMutation.mutateAsync();
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            await postMutation(`mutation PlayerDelete($id: ID!) { playerDelete(id: $id) }`, 'PlayerDelete', multiviewerUrl, { id: oldPlayer.id });
+
+            // Lengthened settle window: lets MV's media pipeline finish rendering the synced
+            // frame on the new player before it's foregrounded by the delete.
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Reset alwaysOnTop:false first, then delete — both in one document so the order
+            // is guaranteed. Without this, MV refuses to delete a player that still has
+            // alwaysOnTop:true and the player accumulates in the players list, causing the
+            // controller grid to show a stale driver after a switch.
+            await postMutation(
+                `mutation FinishDriverSwitch($oldId: ID!) {\n  resetTop: playerSetAlwaysOnTop(id: $oldId, alwaysOnTop: false)\n  delete: playerDelete(id: $oldId)\n}`,
+                'FinishDriverSwitch',
+                multiviewerUrl,
+                { oldId: oldPlayer.id }
+            );
         },
         onSuccess: invalidateDynamicData,
         onError: (error) => {
@@ -343,10 +405,10 @@ const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ players
             <p>The buttons at the bottom of the screen provide global control over all players:</p>
             <ul>
                 <li><strong>Sync:</strong> Resynchronizes all video feeds.</li>
+                <li><strong>Seek (-10s / -5s / +5s / +10s):</strong> Jump the main feed backward or forward. Disabled during live sessions.</li>
                 <li><strong>Pause/Play:</strong> Pauses or plays all video feeds simultaneously. Disabled during live sessions.</li>
-                <li><strong>Speedo:</strong> Toggles the speedometer graphic on all Onboard Cameras.</li>
-                <li><strong>Header:</strong> Switches the header style on all Onboard Cameras.</li>
             </ul>
+            <p>The default Speedometer and Onboard Header behavior for all Onboard Cameras can be set in the <strong>Settings</strong> page; those defaults are applied whenever Sync is pressed.</p>
         </>
     );
     
@@ -380,21 +442,39 @@ const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ players
                             <div className="controller-mobile-modal-tab-content">
                                 {activeOBCModalTab === 'switch' && (
                                     <div className="controller-mobile-modal-driver-list">
-                                        {/* FIX: Add type assertion to Object.values to fix property access errors on 'd'. */}
-                                        {(Object.values(driverListData) as F1Driver[]).map((d) => (
-                                            <div
-                                                key={d.Tla}
-                                                className={`controller-mobile-modal-driver-item ${selectedPlayer.driverData?.tla === d.Tla ? 'active' : ''}`}
-                                                onClick={() => {
-                                                    if (selectedPlayer.driverData?.tla !== d.Tla) {
-                                                        driverSwitchMutation.mutate(d.Tla);
-                                                    }
-                                                }}
-                                            >
-                                                <img src={d.HeadshotUrl} alt={d.Tla} />
-                                                <span>{d.Tla}</span>
-                                            </div>
-                                        ))}
+                                        {/* Sort by team's current championship position, then by TLA within team — mirrors desktop. */}
+                                        {(Object.values(driverListData) as F1Driver[])
+                                            .sort((a, b) => {
+                                                const aPos = teamStandings?.[a.TeamName] ?? Number.MAX_SAFE_INTEGER;
+                                                const bPos = teamStandings?.[b.TeamName] ?? Number.MAX_SAFE_INTEGER;
+                                                if (aPos !== bPos) return aPos - bPos;
+                                                if (aPos === Number.MAX_SAFE_INTEGER) {
+                                                    const teamCmp = a.TeamName.localeCompare(b.TeamName);
+                                                    if (teamCmp !== 0) return teamCmp;
+                                                }
+                                                return a.Tla.localeCompare(b.Tla);
+                                            })
+                                            .map((d) => {
+                                                const isCurrent = selectedPlayer.driverData?.tla === d.Tla;
+                                                const line = timingData?.Lines?.[d.RacingNumber];
+                                                const isRetired = Boolean(line?.Retired || line?.Stopped);
+                                                const isDisabled = isCurrent || isRetired;
+                                                return (
+                                                    <div
+                                                        key={d.Tla}
+                                                        className={`controller-mobile-modal-driver-item ${isDisabled ? 'active' : ''}`}
+                                                        onClick={() => {
+                                                            if (!isDisabled) {
+                                                                driverSwitchMutation.mutate(d.Tla);
+                                                            }
+                                                        }}
+                                                        title={isRetired ? `${d.Tla} — out of session` : undefined}
+                                                    >
+                                                        <img src={d.HeadshotUrl} alt={d.Tla} />
+                                                        <span>{d.Tla}</span>
+                                                    </div>
+                                                );
+                                            })}
                                     </div>
                                 )}
 
@@ -563,30 +643,25 @@ const ControllerScreenMobile: React.FC<ControllerScreenMobileProps> = ({ players
                 )}
             </div>
 
-            <div className="controller-mobile-master-controls">
-                <button className="controller-mobile-master-button" onClick={() => syncMutation.mutate()}>
-                    <SyncIcon />
-                    <span>Sync</span>
-                </button>
-                <button className="controller-mobile-master-button" onClick={handleToggleMasterPause} disabled={isLive}>
-                    {isGloballyPaused ? <PlayIcon /> : <PauseIcon />}
-                    <span>{isGloballyPaused ? 'Play' : 'Pause'}</span>
-                </button>
-                <button 
-                    className={`controller-mobile-master-button ${isSpeedometerVisible ? 'active' : ''}`} 
-                    onClick={handleToggleSpeedometer}
-                >
-                    <SpeedometerIcon />
-                    <span>Speedo</span>
-                </button>
-                <button 
-                    className={`controller-mobile-master-button ${driverHeaderMode === 'DRIVER_HEADER' ? 'active' : ''}`} 
-                    onClick={handleToggleDriverHeaderMode}
-                >
-                    <HeaderIcon />
-                    <span>Header</span>
-                </button>
-            </div>
+            {(() => {
+                const mainFeedId = playersData.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL')?.id;
+                const seekDisabled = isLive || !mainFeedId;
+                const seek = (relative: number) => { if (mainFeedId) handleSeek(mainFeedId, relative); };
+                return (
+                    <div className="controller-mobile-master-controls">
+                        <button className="controller-mobile-master-button" onClick={() => syncMutation.mutate()} aria-label="Sync">
+                            <SyncIcon />
+                        </button>
+                        <button className="controller-mobile-master-button controller-mobile-seek-button" onClick={() => seek(-10)} disabled={seekDisabled}>-10s</button>
+                        <button className="controller-mobile-master-button controller-mobile-seek-button" onClick={() => seek(-5)} disabled={seekDisabled}>-5s</button>
+                        <button className="controller-mobile-master-button" onClick={handleToggleMasterPause} disabled={isLive} aria-label={isGloballyPaused ? 'Play' : 'Pause'}>
+                            {isGloballyPaused ? <PlayIcon /> : <PauseIcon />}
+                        </button>
+                        <button className="controller-mobile-master-button controller-mobile-seek-button" onClick={() => seek(5)} disabled={seekDisabled}>+5s</button>
+                        <button className="controller-mobile-master-button controller-mobile-seek-button" onClick={() => seek(10)} disabled={seekDisabled}>+10s</button>
+                    </div>
+                );
+            })()}
             
             {renderPlayerModal()}
 

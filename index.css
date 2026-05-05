@@ -34,6 +34,9 @@ body {
 h1, h2, h3 {
   margin-top: 0;
 }
+h1 {
+  margin-bottom: 0.75rem;
+}
 
 p {
     line-height: 1.6;
@@ -95,11 +98,121 @@ p {
 
 .main-content {
   flex-grow: 1;
-  padding: 2rem;
-  position: relative; 
+  padding: 1rem 2rem 2rem;
+  position: relative;
   z-index: 20; 
   min-width: 0; /* Prevents flexbox from overflowing when content is too wide */
   overflow-y: auto; /* Allow this panel to scroll independently */
+}
+
+/* Standings Screen */
+.standings__tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 1rem;
+}
+.standings__tab-button {
+  padding: 0.6rem 1rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.standings__tab-button.active {
+  color: var(--sidebar-active-link-bg);
+  border-bottom-color: var(--sidebar-active-link-bg);
+}
+.standings-table {
+  display: flex;
+  flex-direction: column;
+}
+.standings-table__head,
+.standings-table__row {
+  display: grid;
+  grid-template-columns: 60px 70px 1fr 90px 90px 70px;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+.standings-table__row {
+  /* Pin row height so the layout doesn't shift when toggling between Drivers / Teams. */
+  min-height: 46px;
+}
+.standings-table__head {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.standings-table__row:last-child {
+  border-bottom: none;
+}
+.standings-table__cell--pos {
+  font-weight: 700;
+  font-size: 1rem;
+}
+.standings-table__cell--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.standings-table__cell--name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.standings-table__team-bar {
+  display: inline-block;
+  width: 4px;
+  height: 22px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.standings-table__driver-num {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+}
+.standings-table__driver-tla {
+  font-weight: 700;
+  min-width: 36px;
+}
+.standings-table__driver-fullname {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.standings-table__team-name {
+  font-weight: 600;
+}
+.standings__pos-change {
+  font-weight: 600;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.standings__pos-change--up {
+  color: var(--success-color);
+}
+.standings__pos-change--down {
+  color: var(--error-color);
+}
+.standings__pos-change--same {
+  color: var(--text-secondary);
+}
+.standings__points-delta {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.standings__points-delta--gain {
+  color: var(--success-color);
 }
 
 /* Card component */
@@ -108,7 +221,7 @@ p {
   border-radius: 12px;
   padding: 1.5rem;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-  margin-top: 1.5rem;
+  margin-top: 1rem;
 }
 .card.card--error {
   border: 2px solid var(--error-color);
@@ -665,11 +778,33 @@ input:checked + .slider:before {
     right: 0.5rem;
 }
 .player-box__status-icons svg {
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
 }
 .player-box__muted-icon {
     color: var(--error-color);
+}
+.player-box__fullscreen-toggle {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background-color: rgba(0, 0, 0, 0.55);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.35rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s ease;
+}
+.player-box__fullscreen-toggle:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+}
+.player-box__fullscreen-toggle svg {
+    width: 20px;
+    height: 20px;
 }
 .player-box__main-feed-info {
     position: absolute;
@@ -715,8 +850,57 @@ input:checked + .slider:before {
     width: 20px;
     height: 20px;
 }
-.master-controls__toggle-control {
-    gap: 1rem;
+.master-controls__right {
+    display: flex;
+    gap: 0.75rem;
+    margin-left: auto;
+}
+.master-controls__transport {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+.master-controls__seek-button {
+    padding: 0.45rem 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    min-width: 2.5rem;
+    justify-content: center;
+}
+.master-controls__play-button {
+    padding: 0.45rem 0.7rem;
+    margin: 0 0.3rem;
+}
+.master-controls__toggle-button {
+    padding: 0.6rem 0.75rem;
+    position: relative;
+}
+.master-controls__toggle-button.is-active {
+    background-color: #dbeafe;
+    border-color: #93c5fd;
+    color: var(--sidebar-active-link-bg);
+}
+.master-controls__toggle-button[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.85);
+    color: white;
+    padding: 0.3rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease 0.15s;
+    z-index: 10;
+}
+.master-controls__toggle-button[data-tooltip]:hover::after,
+.master-controls__toggle-button[data-tooltip]:focus-visible::after {
+    opacity: 1;
 }
 
 /* PlayerModal */
@@ -929,9 +1113,12 @@ input:checked + .slider:before {
     border-radius: 8px;
     padding: 0.5rem 1rem;
     box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
     font-family: monospace;
     font-weight: bold;
+}
+.race-status-control + .card {
+    margin-top: 1rem;
 }
 .race-status-control__track-status {
     padding: 0.5rem 1rem;
@@ -2418,20 +2605,29 @@ input:checked + .slider:before {
   z-index: 100;
 }
 .controller-mobile-master-button {
-  background: none;
-  border: none;
+  background-color: white;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 0.25rem;
+  padding: 0.45rem 0.6rem;
   font-size: 0.75rem;
   color: var(--text-primary);
   font-weight: 500;
   cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: background-color 0.1s ease, box-shadow 0.1s ease;
+}
+.controller-mobile-master-button:active:not(:disabled) {
+  background-color: #f0f2f5;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 .controller-mobile-master-button svg {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
 }
 .controller-mobile-master-button:disabled {
   opacity: 0.4;
@@ -2439,6 +2635,13 @@ input:checked + .slider:before {
 }
 .controller-mobile-master-button.active svg {
   color: var(--sidebar-active-link-bg);
+}
+.controller-mobile-seek-button {
+  font-size: 0.9rem;
+  font-weight: 600;
+  min-width: 2.8rem;
+  /* override the default vertical layout; seek labels are single-line */
+  flex-direction: row;
 }
 
 /* Controller Mobile Simple Header - NEW LAYOUT */
@@ -2612,9 +2815,12 @@ input:checked + .slider:before {
 }
 .controller-mobile-modal-driver-list {
   display: flex;
-  overflow-x: auto;
-  gap: 1rem;
-  padding: 0.5rem 0.5rem 1rem; /* Padding for scrollbar visibility and spacing */
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem 0.85rem; /* row gap × column gap — tighter row gap so more rows fit at once */
+  padding: 0.5rem 0.5rem 1rem;
+  max-height: 50vh;
+  overflow-y: auto;
 }
 .controller-mobile-modal-driver-item {
   display: flex;

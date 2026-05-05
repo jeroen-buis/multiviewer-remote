@@ -1,36 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Player, DriverList, F1Driver } from '../../types';
+import { Player, DriverList, F1Driver, TimingData } from '../../types';
 import { EnterFullscreenIcon, ExitFullscreenIcon, MutedIcon, UnmutedIcon, UserPlaceholderIcon } from './icons';
 
 type PlayerModalProps = {
     player: Player | null;
     driverList: DriverList;
-    isLive: boolean;
+    timingData?: TimingData | null;
+    teamStandings?: Record<string, number> | null;
     onClose: () => void;
     onToggleFullscreen: (playerId: string, currentFullscreenState: boolean) => void;
     onToggleMute: (playerId: string, currentMuteState: boolean) => void;
     onVolumeChange: (playerId: string, newVolume: number, isMuted: boolean) => Promise<void>;
     onDriverSwitch: (newDriverTla: string) => void;
-    onSeek: (playerId: string, relativeSeconds: number) => void;
 };
 
-const formatTime = (seconds: number) => {
-    if (isNaN(seconds) || seconds < 0) {
-        return '00:00';
-    }
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-
-    const pad = (num: number) => num.toString().padStart(2, '0');
-
-    if (h > 0) {
-        return `${pad(h)}:${pad(m)}:${pad(s)}`;
-    }
-    return `${pad(m)}:${pad(s)}`;
-};
-
-const PlayerModal: React.FC<PlayerModalProps> = ({ player, driverList, isLive, onClose, onToggleFullscreen, onToggleMute, onVolumeChange, onDriverSwitch, onSeek }) => {
+const PlayerModal: React.FC<PlayerModalProps> = ({ player, driverList, timingData, teamStandings, onClose, onToggleFullscreen, onToggleMute, onVolumeChange, onDriverSwitch }) => {
     const [isVolumeSliderActive, setIsVolumeSliderActive] = useState(false);
     const [modalVolume, setModalVolume] = useState(0);
     const volumeChangeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,32 +69,30 @@ const PlayerModal: React.FC<PlayerModalProps> = ({ player, driverList, isLive, o
         };
     }, [modalVolume, isVolumeSliderActive, player, onVolumeChange]);
 
-    const [displayTime, setDisplayTime] = useState(0);
-
-    useEffect(() => {
-        if (!player || player.state.paused) {
-            if (player) setDisplayTime(player.state.interpolatedCurrentTime);
-            return;
-        }
-
-        // Initialize from the player's interpolated time
-        setDisplayTime(player.state.interpolatedCurrentTime);
-
-        // Tick forward every second while playing
-        const interval = setInterval(() => {
-            setDisplayTime(prev => prev + 1);
-        }, 1000);
-
-        return () => clearInterval(interval);
-    }, [player?.id, player?.state.interpolatedCurrentTime, player?.state.paused]);
-
     if (!player) return null;
 
     const isOBC = player.type === 'OBC';
     // FIX: Explicitly type items from Object.values to avoid 'unknown' type errors.
     const driver = player.driverData ? (Object.values(driverList) as F1Driver[]).find(d => d.Tla === player.driverData!.tla) : null;
+    // Sort by team's current championship position (e.g. Mercedes drivers first if Mercedes is P1).
+    // Within a team, alphabetical TLA — stable across data refreshes. Falls back to TeamName order
+    // if the championship feed isn't broadcasting yet.
     const allDriversSorted = (Object.values(driverList) as F1Driver[])
-        .sort((a, b) => a.TeamName.localeCompare(b.TeamName) || a.Tla.localeCompare(b.Tla));
+        .sort((a, b) => {
+            const aPos = teamStandings?.[a.TeamName] ?? Number.MAX_SAFE_INTEGER;
+            const bPos = teamStandings?.[b.TeamName] ?? Number.MAX_SAFE_INTEGER;
+            if (aPos !== bPos) return aPos - bPos;
+            if (aPos === Number.MAX_SAFE_INTEGER) {
+                const teamCmp = a.TeamName.localeCompare(b.TeamName);
+                if (teamCmp !== 0) return teamCmp;
+            }
+            return a.Tla.localeCompare(b.Tla);
+        });
+
+    const isDriverRetired = (racingNumber: string) => {
+        const line = timingData?.Lines?.[racingNumber];
+        return Boolean(line?.Retired || line?.Stopped);
+    };
 
     return (
         <div className="player-modal-overlay" onClick={onClose}>
@@ -153,29 +135,6 @@ const PlayerModal: React.FC<PlayerModalProps> = ({ player, driverList, isLive, o
                     </div>
                 </div>
 
-                {!isOBC && (
-                    <>
-                        <div className="player-modal-divider" />
-                        <div 
-                            className={`player-modal-seek-controls ${isLive ? 'disabled' : ''}`}
-                            title={isLive ? "Seeking is disabled during a live session" : ""}
-                        >
-                            <h3>Seek Feed</h3>
-                            <div className="player-modal-seek-buttons">
-                                <button className="control-button" onClick={() => onSeek(player.id, -300)} disabled={isLive}>-5m</button>
-                                <button className="control-button" onClick={() => onSeek(player.id, -30)} disabled={isLive}>-30s</button>
-                                <button className="control-button" onClick={() => onSeek(player.id, -10)} disabled={isLive}>-10s</button>
-                                <div className="player-modal-current-time">
-                                    {formatTime(displayTime)}
-                                </div>
-                                <button className="control-button" onClick={() => onSeek(player.id, 10)} disabled={isLive}>+10s</button>
-                                <button className="control-button" onClick={() => onSeek(player.id, 30)} disabled={isLive}>+30s</button>
-                                <button className="control-button" onClick={() => onSeek(player.id, 300)} disabled={isLive}>+5m</button>
-                            </div>
-                        </div>
-                    </>
-                )}
-
                 {isOBC && (
                     <>
                         <div className="player-modal-divider" />
@@ -184,11 +143,14 @@ const PlayerModal: React.FC<PlayerModalProps> = ({ player, driverList, isLive, o
                             <div className="player-modal-driver-grid">
                                 {allDriversSorted.map((d) => {
                                     const isCurrentDriver = d.Tla === driver?.Tla;
+                                    const isRetired = isDriverRetired(d.RacingNumber);
+                                    const isDisabled = isCurrentDriver || isRetired;
                                     return (
                                         <div
                                             key={d.Tla}
-                                            className={`player-modal-driver-grid-item ${isCurrentDriver ? 'disabled' : ''}`}
-                                            onClick={() => !isCurrentDriver && onDriverSwitch(d.Tla)}
+                                            className={`player-modal-driver-grid-item ${isDisabled ? 'disabled' : ''}`}
+                                            onClick={() => !isDisabled && onDriverSwitch(d.Tla)}
+                                            title={isRetired ? `${d.Tla} — out of session` : undefined}
                                         >
                                             {d.HeadshotUrl ? (
                                                 <img src={d.HeadshotUrl} alt={d.Tla} />

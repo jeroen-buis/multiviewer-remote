@@ -10,6 +10,8 @@ export interface Settings {
   developerMode: boolean;
   apiOverrideUrl: string;
   units: 'metric' | 'imperial';
+  defaultSpeedometerVisible: boolean;
+  defaultDriverHeaderMode: 'OBC_LIVE_TIMING' | 'DRIVER_HEADER';
 }
 
 export interface FetchedData<T> {
@@ -192,6 +194,28 @@ export interface F1LiveTimingState {
   WeatherDataSeries: {
     Series: WeatherDataSeriesEntry[];
   };
+  ChampionshipPrediction?: ChampionshipPrediction | null;
+}
+
+export interface ChampionshipDriverPrediction {
+  RacingNumber: string;
+  CurrentPosition: number;
+  PredictedPosition: number;
+  CurrentPoints: number;
+  PredictedPoints: number;
+}
+
+export interface ChampionshipTeamPrediction {
+  TeamName: string;
+  CurrentPosition: number;
+  PredictedPosition: number;
+  CurrentPoints: number;
+  PredictedPoints: number;
+}
+
+export interface ChampionshipPrediction {
+  Drivers: Record<string, ChampionshipDriverPrediction>;
+  Teams: Record<string, ChampionshipTeamPrediction>;
 }
 
 export interface WeatherDataSeriesEntry {

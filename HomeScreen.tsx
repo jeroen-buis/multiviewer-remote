@@ -195,6 +195,28 @@ const GettingStartedTab: React.FC = () => {
 const ReleaseNotesTab: React.FC = () => (
     <>
         <h2>Release Notes</h2>
+        <h3>Version 1.7</h3>
+        <ul>
+            <li><strong>New Screen — Standings:</strong> Live championship predictions for both drivers and teams: current vs. predicted positions and points. Sits at the top of the navigation, right under Home.</li>
+            <li><strong>Controller — Transport Bar:</strong> Seek buttons (-5m / -30s / -10s / -5s / +5s / +10s / +30s / +5m on desktop; ±10s and ±5s on mobile) now flank the Play/Pause button on the master controls, so you can scrub the broadcast without opening the per-player modal. The duplicate seek section in the F1 Live / Tracker / Data modal has been removed.</li>
+            <li><strong>Controller — Per-Player Fullscreen Toggle:</strong> Each player tile has a one-tap fullscreen icon in the top-right. The volume / muted indicator is also slightly larger.</li>
+            <li><strong>Controller — Multi-Monitor Fullscreen:</strong> Going fullscreen on one monitor now leaves players on other monitors visible and controllable in the controller view; only same-monitor tiles are hidden by the fullscreen tile.</li>
+            <li><strong>Controller — Smooth Time:</strong> The main-feed elapsed time ticks every second locally between API refreshes instead of jumping at each poll.</li>
+            <li><strong>Driver Switch — Smarter Sorting:</strong> Drivers in the switch picker are now grouped by team and ordered by the team's current championship position (e.g., the leading constructor's drivers come first). Retired or stopped drivers are greyed out so they can't be picked accidentally.</li>
+            <li><strong>Driver Switch — Reliability:</strong> Switching while the broadcast is paused now correctly aligns the new on-board to the right frame. The old player is reliably deleted (an occasional stale-driver icon on mobile is fixed). Transient "not ready" errors from slower MultiViewer setups now retry automatically instead of failing the switch.</li>
+            <li><strong>Mobile Controller — Cleaner Bottom Bar:</strong> Replaced the Speedometer / Onboard Header buttons with seek + Play/Pause + Sync. The Speedometer / Onboard Header defaults set in Settings are still applied automatically on every Sync. The driver picker now wraps to multiple rows instead of forcing a single horizontal scroll.</li>
+        </ul>
+        <hr />
+        <h3>Version 1.6</h3>
+        <ul>
+            <li><strong>Home Screen:</strong> The Subscription, MultiViewer, and Device status now live in their own "Status" tab (the new default), making the About, Getting Started, and Release Notes content easier to find.</li>
+            <li><strong>UI Polish:</strong> Tightened the spacing between page headers and content across every tab so more information is visible without scrolling.</li>
+            <li><strong>New Setting — Default Speedometer / Onboard Header:</strong> The Settings page now lets you choose the default state for both. The Controller starts with those values rather than always-off, and re-applies them to every Onboard Camera whenever Sync is pressed.</li>
+            <li><strong>Controller Polish:</strong> The Speedometer and Onboard Header toggles became compact icon buttons that highlight when active, freeing real-estate in the master controls row.</li>
+            <li><strong>Pause now stops Live Timing:</strong> Pressing Pause also syncs the timing feed to the paused state, so Live Timing no longer keeps ticking while video is paused.</li>
+            <li><strong>Performance:</strong> Bundled the per-player commands (pause, play, sync, speedometer, onboard header) into single GraphQL requests. Pause and Play now complete in one round-trip instead of 17+ — actions feel near-instantaneous.</li>
+        </ul>
+        <hr />
         <h3>Version 1.5</h3>
         <ul>
             <li><strong>Bug Fix:</strong> Fixed an issue where the app could show a blank screen after a new version was deployed, particularly on Android Chrome. The service worker now always fetches the latest app shell when online, and old caches are automatically cleared on update so a stuck device unsticks itself on the next reload.</li>
@@ -268,6 +290,72 @@ const ReleaseNotesTab: React.FC = () => (
     </>
 );
 
+type StatusTabProps = {
+  connectionStatus: ConnectionStatus;
+  multiviewerUrl: string;
+  subscriptionData: FetchedData<Subscription | null>;
+  systemInfoData: FetchedData<SystemInfo | null>;
+  versionData: FetchedData<string | null>;
+  displayModeLabel: string;
+  width: number;
+  height: number;
+};
+
+const StatusTab: React.FC<StatusTabProps> = ({ connectionStatus, multiviewerUrl, subscriptionData, systemInfoData, versionData, displayModeLabel, width, height }) => {
+    if (connectionStatus === 'not-configured') {
+        return (
+            <>
+                <h2>Welcome to MultiViewer Remote!</h2>
+                <p>To get started, please go to the <strong>Settings</strong> page and enter the IP address or hostname of the computer running MultiViewer.</p>
+                <p>You can find detailed instructions in the "Getting Started" tab.</p>
+            </>
+        );
+    }
+
+    if (connectionStatus === 'error') {
+        return (
+            <>
+                <h2>Connection Error</h2>
+                <p className="error">
+                    Could not connect to the MultiViewer API at <strong>{multiviewerUrl}</strong>. Please check the IP/Hostname in <strong>Settings</strong> and ensure MultiViewer is running. You can find detailed instructions in the "Getting Started" tab.
+                </p>
+            </>
+        );
+    }
+
+    return (
+        <>
+            <div className="home-screen__status-group">
+                <h3>Subscription Details</h3>
+                {subscriptionData.error && <p className="error">Could not load subscription data: {subscriptionData.error}</p>}
+                {!subscriptionData.data && !subscriptionData.error && <p className="status">No active subscription found.</p>}
+                {subscriptionData.data && (
+                    <>
+                        <p><strong>Type:</strong> {subscriptionData.data.subscriptionType}</p>
+                        <p><strong>Expires:</strong> {new Date(subscriptionData.data.expiresAt * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                    </>
+                )}
+            </div>
+            <div className="home-screen__status-group">
+                <h3>MultiViewer Details</h3>
+                {(systemInfoData.error || versionData.error) && <p className="error">Could not load system details.</p>}
+                {systemInfoData.data && versionData.data && (
+                    <>
+                        <p><strong>Version:</strong> {versionData.data}</p>
+                        <p><strong>Platform:</strong> {systemInfoData.data.platform}</p>
+                        <p><strong>Architecture:</strong> {systemInfoData.data.arch}</p>
+                    </>
+                )}
+            </div>
+            <div className="home-screen__status-group">
+                <h3>Device Status</h3>
+                <p><strong>Screen Resolution:</strong> {width} x {height}px</p>
+                <p><strong>Display Mode:</strong> {displayModeLabel}</p>
+            </div>
+        </>
+    );
+};
+
 type HomeScreenProps = {
   connectionStatus: ConnectionStatus;
   multiviewerUrl: string;
@@ -278,7 +366,7 @@ type HomeScreenProps = {
 
 const HomeScreen: React.FC<HomeScreenProps> = ({ connectionStatus, multiviewerUrl, subscriptionData, systemInfoData, versionData }) => {
   const settings = useStore((state) => state.settings);
-  const [activeTab, setActiveTab] = React.useState('about');
+  const [activeTab, setActiveTab] = React.useState('status');
   const { width, height } = useWindowSize();
 
   const displayModeLabel = useMemo(() => {
@@ -309,58 +397,14 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ connectionStatus, multiviewerUr
     <div>
       <h1>Home</h1>
 
-      {connectionStatus === 'not-configured' && (
-        <div className="card">
-            <h2>Welcome to MultiViewer Remote!</h2>
-            <p>To get started, please go to the <strong>Settings</strong> page and enter the IP address or hostname of the computer running MultiViewer.</p>
-            <p>You can find detailed instructions in the "Getting Started" guide below.</p>
-        </div>
-      )}
-
-      {connectionStatus === 'error' && (
-        <div className="card card--error">
-          <h2>Connection Error</h2>
-          <p className="error">
-            Could not connect to the MultiViewer API at <strong>{multiviewerUrl}</strong>. Please check the IP/Hostname in <strong>Settings</strong> and ensure MultiViewer is running. You can find detailed instructions in the "Getting Started" guide below.
-          </p>
-        </div>
-      )}
-
-      {connectionStatus === 'connected' && (
-        <div className="card">
-          <h2>Subscription, System and Device Status</h2>
-          <div className="home-screen__status-group">
-            <h3>Subscription Details</h3>
-            {subscriptionData.error && <p className="error">Could not load subscription data: {subscriptionData.error}</p>}
-            {!subscriptionData.data && !subscriptionData.error && <p className="status">No active subscription found.</p>}
-            {subscriptionData.data && (
-              <>
-                <p><strong>Type:</strong> {subscriptionData.data.subscriptionType}</p>
-                <p><strong>Expires:</strong> {new Date(subscriptionData.data.expiresAt * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}</p>
-              </>
-            )}
-          </div>
-          <div className="home-screen__status-group">
-            <h3>MultiViewer Details</h3>
-            {(systemInfoData.error || versionData.error) && <p className="error">Could not load system details.</p>}
-            {systemInfoData.data && versionData.data && (
-              <>
-                <p><strong>Version:</strong> {versionData.data}</p>
-                <p><strong>Platform:</strong> {systemInfoData.data.platform}</p>
-                <p><strong>Architecture:</strong> {systemInfoData.data.arch}</p>
-              </>
-            )}
-          </div>
-          <div className="home-screen__status-group">
-            <h3>Device Status</h3>
-            <p><strong>Screen Resolution:</strong> {width} x {height}px</p>
-            <p><strong>Display Mode:</strong> {displayModeLabel}</p>
-          </div>
-        </div>
-      )}
-
       <div className="card">
         <div className="home-screen__tabs">
+            <button
+                className={`home-screen__tab-button ${activeTab === 'status' ? 'active' : ''}`}
+                onClick={() => setActiveTab('status')}
+            >
+                Status
+            </button>
             <button
                 className={`home-screen__tab-button ${activeTab === 'about' ? 'active' : ''}`}
                 onClick={() => setActiveTab('about')}
@@ -381,6 +425,18 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ connectionStatus, multiviewerUr
             </button>
         </div>
         <div className="home-screen__tab-content">
+            {activeTab === 'status' && (
+                <StatusTab
+                    connectionStatus={connectionStatus}
+                    multiviewerUrl={multiviewerUrl}
+                    subscriptionData={subscriptionData}
+                    systemInfoData={systemInfoData}
+                    versionData={versionData}
+                    displayModeLabel={displayModeLabel}
+                    width={width}
+                    height={height}
+                />
+            )}
             {activeTab === 'about' && <AboutTab />}
             {activeTab === 'getting-started' && <GettingStartedTab />}
             {activeTab === 'release-notes' && <ReleaseNotesTab />}

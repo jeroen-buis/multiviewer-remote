@@ -168,6 +168,33 @@ const SettingsScreen: React.FC = () => {
             />
           </div>
           <div className="settings-screen__form-group">
+            <label>Default Speedometer</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                name="defaultSpeedometerVisible"
+                checked={localSettings.defaultSpeedometerVisible ?? false}
+                onChange={handleChange}
+              />
+              <span className="slider"></span>
+            </label>
+          </div>
+          <div className="settings-screen__form-group">
+            <label>Default Onboard Header</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                name="defaultDriverHeaderMode"
+                checked={localSettings.defaultDriverHeaderMode === 'DRIVER_HEADER'}
+                onChange={(e) => setLocalSettings(prev => ({
+                  ...prev,
+                  defaultDriverHeaderMode: e.target.checked ? 'DRIVER_HEADER' : 'OBC_LIVE_TIMING',
+                }))}
+              />
+              <span className="slider"></span>
+            </label>
+          </div>
+          <div className="settings-screen__form-group">
             <label>Debug Mode</label>
             <label className="toggle-switch">
               <input

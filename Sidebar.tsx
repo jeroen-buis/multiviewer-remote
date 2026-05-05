@@ -99,6 +99,14 @@ const Sidebar: React.FC<SidebarProps> = ({ connectionStatus, onRetry, isEffectiv
     </svg>
   );
 
+  const standingsIcon = (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="8" width="6" height="13"></rect>
+      <rect x="3" y="13" width="6" height="8"></rect>
+      <rect x="15" y="11" width="6" height="10"></rect>
+    </svg>
+  );
+
   const debugIcon = (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 20.5c-4.2 0-8-2.6-8-6.5s3.8-6.5 8-6.5 8 2.6 8 6.5-3.8 6.5-8 6.5Z"></path>
@@ -141,6 +149,7 @@ const Sidebar: React.FC<SidebarProps> = ({ connectionStatus, onRetry, isEffectiv
 
   const navItems = [
     { id: 'home', label: 'Home', icon: homeIcon, restricted: false },
+    { id: 'standings', label: 'Standings', icon: standingsIcon, restricted: true },
     { id: 'race', label: 'Race', icon: raceIcon, restricted: true },
     { id: 'leaderboard', label: 'Leaderboard', icon: leaderboardIcon, restricted: true },
     { id: 'position', label: 'Position', icon: positionIcon, restricted: true },

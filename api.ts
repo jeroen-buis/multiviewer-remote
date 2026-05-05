@@ -127,6 +127,40 @@ export const postMutation = async (mutation: string, operationName: string, mult
     return data;
 };
 
+// Retries postMutation when the GraphQL error matches a "not-yet-ready" code from MultiViewer.
+// PLAYER_NOT_FOUND and SOURCE_INVALID both indicate the new player hasn't finished warming up;
+// a brief wait + retry usually succeeds on the second or third attempt.
+const READY_STATE_RETRY_CODES = ['PLAYER_NOT_FOUND', 'SOURCE_INVALID'];
+
+export const postMutationWithRetry = async (
+    mutation: string,
+    operationName: string,
+    multiviewerUrl: string,
+    variables: Record<string, unknown>,
+    options: { maxAttempts?: number; retryDelayMs?: number; retryableCodes?: string[] } = {},
+) => {
+    const maxAttempts = options.maxAttempts ?? 3;
+    const retryDelayMs = options.retryDelayMs ?? 500;
+    const retryableCodes = options.retryableCodes ?? READY_STATE_RETRY_CODES;
+
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await postMutation(mutation, operationName, multiviewerUrl, variables);
+        } catch (error: unknown) {
+            lastError = error;
+            const message = error instanceof Error ? error.message : String(error);
+            const isRetryable = retryableCodes.some((code) => message.includes(code));
+            if (!isRetryable || attempt === maxAttempts) {
+                throw error;
+            }
+            console.warn(`${operationName} attempt ${attempt} failed with retryable error; retrying in ${retryDelayMs}ms.`);
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        }
+    }
+    throw lastError;
+};
+
 const STATIC_DATA_QUERY = `
   query GetStaticData {
     activeSubscriptions {
@@ -151,7 +185,7 @@ const DYNAMIC_DATA_QUERY = `
       fullscreen alwaysOnTop maintainAspectRatio
     }
     f1LiveTimingState {
-      SessionInfo SessionStatus WeatherData WeatherDataSeries LapCount DriverList TrackStatus TimingData LapSeries TimingAppData RaceControlMessages
+      SessionInfo SessionStatus WeatherData WeatherDataSeries LapCount DriverList TrackStatus TimingData LapSeries TimingAppData RaceControlMessages ChampionshipPrediction
     }
   }
 `;

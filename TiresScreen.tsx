@@ -317,7 +317,7 @@ const TiresScreen: React.FC<TiresScreenProps> = ({ f1LiveTimingState, lapCount, 
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <h1 style={{ margin: 0 }}>Tires</h1>
           <span onClick={() => setIsInfoModalOpen(true)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Learn more about this screen">
               {infoIcon}

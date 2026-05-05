@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Player, F1Driver, LapCount } from '../../types';
-import { MutedIcon, UnmutedIcon } from './icons';
+import { MutedIcon, UnmutedIcon, EnterFullscreenIcon, ExitFullscreenIcon } from './icons';
 
 type PlayerBoxProps = {
     player: Player;
@@ -10,6 +10,7 @@ type PlayerBoxProps = {
     minX: number;
     minY: number;
     onSelect: (player: Player) => void;
+    onToggleFullscreen: (playerId: string, currentFullscreenState: boolean) => void;
     lapCount: LapCount | null;
 };
 
@@ -29,13 +30,28 @@ const formatTime = (seconds: number) => {
     return `${pad(m)}:${pad(s)}`;
 };
 
-const PlayerBox: React.FC<PlayerBoxProps> = ({ player, driver, totalWidth, totalHeight, minX, minY, onSelect, lapCount }) => {
+const PlayerBox: React.FC<PlayerBoxProps> = ({ player, driver, totalWidth, totalHeight, minX, minY, onSelect, onToggleFullscreen, lapCount }) => {
+    const { state } = player;
+    const isMainFeed = player.streamData.title === 'F1 LIVE' || player.streamData.title === 'INTERNATIONAL';
+
+    // Local clock for the main feed time — the API only refreshes every refreshDuration ms,
+    // so without this the displayed seconds appear to jump rather than tick smoothly. We
+    // re-anchor to interpolatedCurrentTime whenever fresh data arrives, and advance +1/s
+    // locally while the player is playing.
+    const [displayTime, setDisplayTime] = useState(state.interpolatedCurrentTime);
+    useEffect(() => {
+        if (!isMainFeed) return;
+        setDisplayTime(state.interpolatedCurrentTime);
+        if (state.paused) return;
+        const interval = setInterval(() => {
+            setDisplayTime((prev) => prev + 1);
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [isMainFeed, state.interpolatedCurrentTime, state.paused]);
+
     if (!player.bounds) {
         return null;
     }
-
-    const { state } = player;
-    const isMainFeed = player.streamData.title === 'F1 LIVE' || player.streamData.title === 'INTERNATIONAL';
 
     return (
         <div
@@ -63,6 +79,18 @@ const PlayerBox: React.FC<PlayerBoxProps> = ({ player, driver, totalWidth, total
                     </span>
                 )}
             </div>
+            <button
+                type="button"
+                className="player-box__fullscreen-toggle"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFullscreen(player.id, player.fullscreen);
+                }}
+                aria-label={player.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                title={player.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            >
+                {player.fullscreen ? <ExitFullscreenIcon /> : <EnterFullscreenIcon />}
+            </button>
             {isMainFeed && (
                 <div className="player-box__main-feed-info">
                     {lapCount && (
@@ -71,7 +99,7 @@ const PlayerBox: React.FC<PlayerBoxProps> = ({ player, driver, totalWidth, total
                         </div>
                     )}
                     <div className="player-box__main-feed-time">
-                        {formatTime(state.interpolatedCurrentTime)}
+                        {formatTime(displayTime)}
                     </div>
                 </div>
             )}

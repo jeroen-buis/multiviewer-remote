@@ -25,6 +25,8 @@ const defaultSettings: Settings = {
   developerMode: false,
   apiOverrideUrl: '',
   units: 'metric',
+  defaultSpeedometerVisible: false,
+  defaultDriverHeaderMode: 'OBC_LIVE_TIMING',
 };
 
 // Robust function to load settings from cookies, merging with defaults
@@ -60,14 +62,16 @@ const loadInitialSettings = (): Settings => {
   return { ...defaultSettings, ...settings };
 };
 
+const initialSettings = loadInitialSettings();
+
 export const useStore = create<AppState>()(
   subscribeWithSelector((set) => ({
     // Initial State
-    settings: loadInitialSettings(),
+    settings: initialSettings,
     activeView: 'home',
     isSidebarCollapsed: getCookie('sidebarCollapsed') === 'true',
-    isSpeedometerVisible: false,
-    driverHeaderMode: 'OBC_LIVE_TIMING',
+    isSpeedometerVisible: initialSettings.defaultSpeedometerVisible,
+    driverHeaderMode: initialSettings.defaultDriverHeaderMode,
 
     // Actions
     setSettings: (newSettings) => set({ settings: newSettings }),

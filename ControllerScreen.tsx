@@ -1,17 +1,19 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Player, DriverList, LapCount, F1Driver } from './types';
+import { Player, DriverList, LapCount, F1Driver, TimingData } from './types';
 import PlayerBox from './components/controller/PlayerBox';
 import MasterControls from './components/controller/MasterControls';
 import PlayerModal from './components/controller/PlayerModal';
 import Modal from './components/Modal';
-import { postMutation } from './api';
+import { postMutation, postMutationWithRetry } from './api';
 import { useStore } from './store';
 import RaceStatusControl from './components/RaceStatusControl';
 
 type ControllerScreenProps = {
   playersData: Player[];
   driverListData: DriverList;
+  timingData?: TimingData | null;
+  teamStandings?: Record<string, number> | null;
   lapCount: LapCount | null;
   trackStatusInfo: { className: string; text: string; visible: boolean };
   drsStatus: 'ENABLED' | 'DISABLED' | string | null;
@@ -21,7 +23,7 @@ type ControllerScreenProps = {
   multiviewerUrl: string;
 };
 
-const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driverListData, lapCount, trackStatusInfo, drsStatus, sessionType, sessionName, sessionStatus, multiviewerUrl }) => {
+const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driverListData, timingData, teamStandings, lapCount, trackStatusInfo, drsStatus, sessionType, sessionName, sessionStatus, multiviewerUrl }) => {
     const isSpeedometerVisible = useStore((state) => state.isSpeedometerVisible);
     const setIsSpeedometerVisible = useStore((state) => state.setIsSpeedometerVisible);
     const driverHeaderMode = useStore((state) => state.driverHeaderMode);
@@ -77,12 +79,16 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
         playersDataRef.current = playersData;
     }, [playersData]);
 
-    const isLive = useMemo(() => {
-        const mainFeed = filteredPlayersData.find(p => 
+    const mainFeed = useMemo(
+        () => filteredPlayersData.find(p =>
             p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL'
-        );
-        return mainFeed ? mainFeed.state.live : false;
-    }, [filteredPlayersData]);
+        ),
+        [filteredPlayersData]
+    );
+    // Fail-closed: when we can't determine state (no main feed open), assume live so the
+    // seek and master pause/play controls stay disabled rather than silently allowing
+    // actions that the API will reject during a real live session.
+    const isLive = mainFeed ? mainFeed.state.live : true;
 
     useEffect(() => {
         const mainFeed = filteredPlayersData.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL');
@@ -121,8 +127,69 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
         },
     });
 
+    // Track each player's most recent non-fullscreen bounds. We use these "stable bounds"
+    // to keep the layout coordinate system anchored when fullscreen toggles, and to size
+    // the fullscreen tile to the area its same-monitor companions used to occupy (rather
+    // than its raw monitor-sized bounds, which would overflow the layout container and
+    // get its border clipped).
+    const stableBoundsRef = useRef<Map<string, NonNullable<Player['bounds']>>>(new Map());
+    filteredPlayersData.forEach(p => {
+        if (!p.fullscreen && p.bounds) {
+            stableBoundsRef.current.set(p.id, p.bounds);
+        }
+    });
+
+    // When a player is fullscreen, its expanded bounds tell us its monitor — any other
+    // player whose bounds intersect is on the same monitor (visually obscured) and we
+    // filter it out. Cross-monitor players keep rendering at their stable positions.
+    // The fullscreen tile itself is rendered at the union of its same-monitor companions'
+    // stable bounds, so it visibly occupies that monitor's portion of the layout while
+    // staying inside the container.
+    const playersToRender = useMemo(() => {
+        const fullscreenPlayer = filteredPlayersData.find(p => p.fullscreen);
+        if (!fullscreenPlayer?.bounds) return filteredPlayersData;
+
+        const fs = fullscreenPlayer.bounds;
+        const intersectsFullscreen = (p: Player) => {
+            if (!p.bounds) return false;
+            const b = p.bounds;
+            return !(
+                b.x + b.width <= fs.x ||
+                b.x >= fs.x + fs.width ||
+                b.y + b.height <= fs.y ||
+                b.y >= fs.y + fs.height
+            );
+        };
+
+        // Compute the "monitor area" from the union of same-monitor players' stable bounds.
+        const sameMonitorPlayers = filteredPlayersData.filter(intersectsFullscreen);
+        let mMinX = Infinity, mMinY = Infinity, mMaxX = -Infinity, mMaxY = -Infinity;
+        sameMonitorPlayers.forEach(p => {
+            const stable = stableBoundsRef.current.get(p.id) ?? p.bounds;
+            if (!stable) return;
+            if (stable.x < mMinX) mMinX = stable.x;
+            if (stable.y < mMinY) mMinY = stable.y;
+            if (stable.x + stable.width > mMaxX) mMaxX = stable.x + stable.width;
+            if (stable.y + stable.height > mMaxY) mMaxY = stable.y + stable.height;
+        });
+
+        const monitorBounds = isFinite(mMinX)
+            ? { x: mMinX, y: mMinY, width: mMaxX - mMinX, height: mMaxY - mMinY }
+            : fullscreenPlayer.bounds;
+
+        const fullscreenForRender = { ...fullscreenPlayer, bounds: monitorBounds };
+
+        return [
+            fullscreenForRender,
+            ...filteredPlayersData.filter(p => p.id !== fullscreenPlayer.id && !intersectsFullscreen(p)),
+        ];
+    }, [filteredPlayersData]);
+
+    // playersToRender uses stable bounds for the fullscreen tile (sized to its monitor area
+    // rather than the raw expanded bounds), so the bounding box stays stable across toggles
+    // — no layout freezing needed.
     const layoutDimensions = useMemo(() => {
-        if (filteredPlayersData.length === 0) {
+        if (playersToRender.length === 0) {
             return { totalWidth: 1920, totalHeight: 1080, minX: 0, minY: 0 };
         }
 
@@ -131,7 +198,7 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
         let maxX = -Infinity;
         let maxY = -Infinity;
 
-        filteredPlayersData.forEach(p => {
+        playersToRender.forEach(p => {
             const b = p.bounds!;
             if (b.x < minX) minX = b.x;
             if (b.y < minY) minY = b.y;
@@ -146,9 +213,9 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
             totalWidth: totalWidth > 0 ? totalWidth : 1920,
             totalHeight: totalHeight > 0 ? totalHeight : 1080,
             minX,
-            minY
+            minY,
         };
-    }, [filteredPlayersData]);
+    }, [playersToRender]);
 
     const { totalWidth, totalHeight, minX, minY } = layoutDimensions;
 
@@ -209,8 +276,10 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
     };
     
     const syncMutation = useMutation({
-        mutationFn: async () => {
-            const mainFeed = playersDataRef.current.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL');
+        mutationFn: async (options?: { enforceObcSettings?: boolean }) => {
+            const enforceObcSettings = options?.enforceObcSettings ?? true;
+            const players = playersDataRef.current;
+            const mainFeed = players.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL');
             if (!mainFeed) throw new Error("Main feed not found to sync to.");
 
             const result = await postMutation(
@@ -222,6 +291,25 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
             if (!result.playerSync) {
                 throw new Error('Sync operation failed, API returned false.');
             }
+
+            // The MultiViewer API doesn't expose per-player speedometer/header state, so we
+            // re-apply the toggle values on every sync to keep all OBCs aligned with the UI.
+            // Skipped when pausing — the toggles haven't changed and the extra round-trips add latency.
+            // Bundled into a single aliased GraphQL document — one HTTP request instead of 2*N.
+            if (enforceObcSettings) {
+                const obcPlayers = players.filter(p => p.type === 'OBC');
+                if (obcPlayers.length > 0) {
+                    const idArgs = obcPlayers.map((_, i) => `$id${i}: ID!`).join(', ');
+                    const fields = obcPlayers.map((_, i) =>
+                        `s${i}: playerSetSpeedometerVisibility(id: $id${i}, visible: $visible)\n  h${i}: playerSetDriverHeaderMode(id: $id${i}, mode: $mode)`
+                    ).join('\n  ');
+                    const mutation = `mutation BulkEnforceObc($visible: Boolean!, $mode: DriverHeaderMode!, ${idArgs}) {\n  ${fields}\n}`;
+                    const variables: Record<string, unknown> = { visible: isSpeedometerVisible, mode: driverHeaderMode };
+                    obcPlayers.forEach((p, i) => { variables[`id${i}`] = p.id; });
+                    await postMutation(mutation, 'BulkEnforceObc', multiviewerUrl, variables);
+                }
+            }
+
             return result;
         },
         onSuccess: invalidateDynamicData,
@@ -239,15 +327,26 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
     }, [syncMutation.status, syncMutation.reset]);
 
     const handleSeek = async (playerId: string, relativeSeconds: number) => {
+        const syncId = mainFeed?.id;
         try {
-            await postMutation(
-                `mutation PlayerSeekTo($id: ID!, $relative: Float) { playerSeekTo(id: $id, relative: $relative) }`,
-                'PlayerSeekTo',
-                multiviewerUrl,
-                { id: playerId, relative: relativeSeconds }
-            );
-            await new Promise(resolve => setTimeout(resolve, 500));
-            syncMutation.mutate();
+            // Seek + sync in one document. GraphQL serial execution guarantees the sync runs
+            // after the seek resolver has fully committed, replacing the old 500ms settle window.
+            if (syncId) {
+                await postMutation(
+                    `mutation SeekAndSync($id: ID!, $relative: Float, $syncId: ID!) {\n  seek: playerSeekTo(id: $id, relative: $relative)\n  sync: playerSync(id: $syncId)\n}`,
+                    'SeekAndSync',
+                    multiviewerUrl,
+                    { id: playerId, relative: relativeSeconds, syncId }
+                );
+            } else {
+                await postMutation(
+                    `mutation PlayerSeekTo($id: ID!, $relative: Float) { playerSeekTo(id: $id, relative: $relative) }`,
+                    'PlayerSeekTo',
+                    multiviewerUrl,
+                    { id: playerId, relative: relativeSeconds }
+                );
+            }
+            invalidateDynamicData();
         } catch (error) {
             console.error('Seek failed:', error);
         }
@@ -256,41 +355,44 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
     const handleToggleSpeedometer = () => {
         const newVisibility = !isSpeedometerVisible;
         const obcPlayers = playersDataRef.current.filter(p => p.type === 'OBC');
-        const promises = obcPlayers.map(p => playerMutation.mutateAsync({
-            mutation: `mutation PlayerSetSpeedometerVisibility($id: ID!, $visible: Boolean!) { playerSetSpeedometerVisibility(id: $id, visible: $visible) }`,
-            operationName: 'PlayerSetSpeedometerVisibility',
-            variables: { id: p.id, visible: newVisibility },
-        }));
-        Promise.all(promises).then(() => {
+        if (obcPlayers.length === 0) {
             setIsSpeedometerVisible(newVisibility);
-        }).catch((error) => {
-            console.error('Failed to toggle speedometer:', error);
-        });
+            return;
+        }
+        // Bundle all per-OBC mutations into a single aliased GraphQL document — one round-trip
+        // instead of N. The shared $visible variable means each field references the same value.
+        const idArgs = obcPlayers.map((_, i) => `$id${i}: ID!`).join(', ');
+        const fields = obcPlayers.map((_, i) =>
+            `s${i}: playerSetSpeedometerVisibility(id: $id${i}, visible: $visible)`
+        ).join('\n  ');
+        const mutation = `mutation BulkSetSpeedometer($visible: Boolean!, ${idArgs}) {\n  ${fields}\n}`;
+        const variables: Record<string, unknown> = { visible: newVisibility };
+        obcPlayers.forEach((p, i) => { variables[`id${i}`] = p.id; });
+
+        playerMutation.mutateAsync({ mutation, operationName: 'BulkSetSpeedometer', variables })
+            .then(() => setIsSpeedometerVisible(newVisibility))
+            .catch((error) => console.error('Failed to toggle speedometer:', error));
     };
 
     const handleToggleDriverHeaderMode = () => {
         const newMode = driverHeaderMode === 'OBC_LIVE_TIMING' ? 'DRIVER_HEADER' : 'OBC_LIVE_TIMING';
         const obcPlayers = playersDataRef.current.filter(p => p.type === 'OBC');
-        const promises = obcPlayers.map(p => playerMutation.mutateAsync({
-            mutation: `mutation PlayerSetDriverHeaderMode($id: ID!, $mode: DriverHeaderMode!) { playerSetDriverHeaderMode(id: $id, mode: $mode) }`,
-            operationName: 'PlayerSetDriverHeaderMode',
-            variables: { id: p.id, mode: newMode },
-        }));
-        Promise.all(promises).then(() => {
+        if (obcPlayers.length === 0) {
             setDriverHeaderMode(newMode);
-        }).catch((error) => {
-            console.error('Failed to toggle driver header mode:', error);
-        });
-    };
+            return;
+        }
+        const idArgs = obcPlayers.map((_, i) => `$id${i}: ID!`).join(', ');
+        const fields = obcPlayers.map((_, i) =>
+            `h${i}: playerSetDriverHeaderMode(id: $id${i}, mode: $mode)`
+        ).join('\n  ');
+        const mutation = `mutation BulkSetDriverHeaderMode($mode: DriverHeaderMode!, ${idArgs}) {\n  ${fields}\n}`;
+        const variables: Record<string, unknown> = { mode: newMode };
+        obcPlayers.forEach((p, i) => { variables[`id${i}`] = p.id; });
 
-    const setPausedMutation = useMutation({
-        mutationFn: ({ playerId, paused }: { playerId: string; paused: boolean }) => postMutation(
-            `mutation PlayerSetPaused($id: ID!, $paused: Boolean) { playerSetPaused(id: $id, paused: $paused) }`,
-            'PlayerSetPaused',
-            multiviewerUrl,
-            { id: playerId, paused }
-        )
-    });
+        playerMutation.mutateAsync({ mutation, operationName: 'BulkSetDriverHeaderMode', variables })
+            .then(() => setDriverHeaderMode(newMode))
+            .catch((error) => console.error('Failed to toggle driver header mode:', error));
+    };
 
     const handleToggleMasterPause = async () => {
         const players = playersDataRef.current;
@@ -299,17 +401,53 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
         const mainFeed = players.find(p => p.streamData.title === 'F1 LIVE' || p.streamData.title === 'INTERNATIONAL');
         const tracker = players.find(p => p.type === 'TRACKER' || p.streamData.title === 'TRACKER');
         const obcs = players.filter(p => p.type === 'OBC');
-        
-        const setPlayerPaused = (id: string, paused: boolean) => setPausedMutation.mutateAsync({ playerId: id, paused });
-        
+
+        // Pause + sync in a single document. GraphQL runs mutation fields serially in document
+        // order, so playerSync only fires after every playerSetPaused has resolved.
+        const bulkPauseAndSync = async (orderedPlayers: Player[], syncToId: string) => {
+            if (orderedPlayers.length === 0) return;
+            const idArgs = orderedPlayers.map((_, i) => `$id${i}: ID!`).join(', ');
+            const fields = orderedPlayers.map((_, i) =>
+                `p${i}: playerSetPaused(id: $id${i}, paused: $paused)`
+            ).join('\n  ');
+            const mutation = `mutation BulkPauseAndSync($paused: Boolean!, $syncId: ID!, ${idArgs}) {\n  ${fields}\n  sync: playerSync(id: $syncId)\n}`;
+            const variables: Record<string, unknown> = { paused: true, syncId: syncToId };
+            orderedPlayers.forEach((p, i) => { variables[`id${i}`] = p.id; });
+            await postMutation(mutation, 'BulkPauseAndSync', multiviewerUrl, variables);
+        };
+
+        // Play + sync + OBC enforcement, all in one document. orderedPlayers must list OBCs first
+        // (indices 0..obcCount-1) so the enforcement aliases can re-use the same $idN variables.
+        const bulkPlayAndSync = async (
+            orderedPlayers: Player[],
+            obcCount: number,
+            syncToId: string,
+            visible: boolean,
+            mode: 'OBC_LIVE_TIMING' | 'DRIVER_HEADER'
+        ) => {
+            if (orderedPlayers.length === 0) return;
+            const idArgs = orderedPlayers.map((_, i) => `$id${i}: ID!`).join(', ');
+            const playFields = orderedPlayers.map((_, i) =>
+                `p${i}: playerSetPaused(id: $id${i}, paused: $paused)`
+            ).join('\n  ');
+            const enforceFields = Array.from({ length: obcCount }, (_, i) =>
+                `s${i}: playerSetSpeedometerVisibility(id: $id${i}, visible: $visible)\n  h${i}: playerSetDriverHeaderMode(id: $id${i}, mode: $mode)`
+            ).join('\n  ');
+            const enforceBlock = enforceFields ? `\n  ${enforceFields}` : '';
+            const mutation = `mutation BulkPlayAndSync($paused: Boolean!, $syncId: ID!, $visible: Boolean!, $mode: DriverHeaderMode!, ${idArgs}) {\n  ${playFields}\n  sync: playerSync(id: $syncId)${enforceBlock}\n}`;
+            const variables: Record<string, unknown> = { paused: false, syncId: syncToId, visible, mode };
+            orderedPlayers.forEach((p, i) => { variables[`id${i}`] = p.id; });
+            await postMutation(mutation, 'BulkPlayAndSync', multiviewerUrl, variables);
+        };
+
         try {
+            if (!mainFeed) throw new Error("Main feed not found to sync to.");
             if (shouldPause) {
                 const pauseOrder = [mainFeed, tracker, ...obcs].filter(Boolean) as Player[];
-                for (const player of pauseOrder) await setPlayerPaused(player.id, true);
+                await bulkPauseAndSync(pauseOrder, mainFeed.id);
             } else {
                 const playOrder = [...obcs, tracker, mainFeed].filter(Boolean) as Player[];
-                for (const player of playOrder) await setPlayerPaused(player.id, false);
-                await syncMutation.mutateAsync();
+                await bulkPlayAndSync(playOrder, obcs.length, mainFeed.id, isSpeedometerVisible, driverHeaderMode);
             }
         } catch (error) {
             console.error('Master pause/play sequence failed:', error);
@@ -330,20 +468,56 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
             const createInput = { maintainAspectRatio: true, fullscreen: false, bounds: oldPlayer.bounds, alwaysOnTop: false, contentId: parseInt(oldPlayer.streamData.contentId, 10), driverTla: newDriverTla };
             const createResult = await postMutation(`mutation PlayerCreate($input: PlayerCreateInput!) { playerCreate(input: $input) }`, 'PlayerCreate', multiviewerUrl, { input: createInput });
             const newPlayerId = createResult.playerCreate;
-            
+
+            // Give MultiViewer time to fully load the new player's source before we touch it.
+            // Critical: PrepareDriverSwitch's `unpause` step calls MV's internal play(), which
+            // errors with SOURCE_INVALID if load() hasn't resolved yet. 500ms was too short.
             await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            if (newPlayerId) {
-                if (isSpeedometerVisible) {
-                    await postMutation(`mutation PlayerSetSpeedometerVisibility($id: ID!, $visible: Boolean!) { playerSetSpeedometerVisibility(id: $id, visible: $visible) }`, 'PlayerSetSpeedometerVisibility', multiviewerUrl, { id: newPlayerId, visible: true });
-                }
-                await postMutation(`mutation PlayerSetDriverHeaderMode($id: ID!, $mode: DriverHeaderMode!) { playerSetDriverHeaderMode(id: $id, mode: $mode) }`, 'PlayerSetDriverHeaderMode', multiviewerUrl, { id: newPlayerId, mode: driverHeaderMode });
+
+            // Bundled prep: speedo + header + unpause(new) + sync + repause(new). The
+            // unpause/repause around the sync is the key to making this work when the session
+            // is paused — a freshly created paused player doesn't seem to receive playerSync
+            // properly in MultiViewer, so we briefly put it into a "playable" state, sync, and
+            // then restore the pause state to match the main feed.
+            const syncId = mainFeed?.id;
+            const finalPaused = mainFeed?.state.paused ?? false;
+            if (newPlayerId && syncId) {
+                await postMutationWithRetry(
+                    `mutation PrepareDriverSwitch($newId: ID!, $visible: Boolean!, $mode: DriverHeaderMode!, $syncId: ID!, $finalPaused: Boolean!) {\n  speedo: playerSetSpeedometerVisibility(id: $newId, visible: $visible)\n  header: playerSetDriverHeaderMode(id: $newId, mode: $mode)\n  unpause: playerSetPaused(id: $newId, paused: false)\n  sync: playerSync(id: $syncId)\n  repause: playerSetPaused(id: $newId, paused: $finalPaused)\n}`,
+                    'PrepareDriverSwitch',
+                    multiviewerUrl,
+                    {
+                        newId: newPlayerId,
+                        visible: isSpeedometerVisible,
+                        mode: driverHeaderMode,
+                        syncId,
+                        finalPaused,
+                    }
+                );
+            } else if (newPlayerId) {
+                // No main feed to sync against — at least set the attrs.
+                await postMutationWithRetry(
+                    `mutation PrepareDriverSwitchNoSync($newId: ID!, $visible: Boolean!, $mode: DriverHeaderMode!) {\n  speedo: playerSetSpeedometerVisibility(id: $newId, visible: $visible)\n  header: playerSetDriverHeaderMode(id: $newId, mode: $mode)\n}`,
+                    'PrepareDriverSwitchNoSync',
+                    multiviewerUrl,
+                    { newId: newPlayerId, visible: isSpeedometerVisible, mode: driverHeaderMode }
+                );
             }
-            
-            await syncMutation.mutateAsync();
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            await postMutation(`mutation PlayerDelete($id: ID!) { playerDelete(id: $id) }`, 'PlayerDelete', multiviewerUrl, { id: oldPlayer.id });
+
+            // Lengthened settle window: lets MV's media pipeline finish rendering the synced
+            // frame on the new player before it's foregrounded by the delete.
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Reset alwaysOnTop:false first, then delete — bundled so MV won't refuse to
+            // delete a still-flagged-on-top player. Without this the old player accumulates
+            // in MV's players list, surfacing as a stale tile in the mobile controller grid
+            // (desktop's bounds-dedup happens to pick the newer player so the bug is hidden).
+            await postMutation(
+                `mutation FinishDriverSwitch($oldId: ID!) {\n  resetTop: playerSetAlwaysOnTop(id: $oldId, alwaysOnTop: false)\n  delete: playerDelete(id: $oldId)\n}`,
+                'FinishDriverSwitch',
+                multiviewerUrl,
+                { oldId: oldPlayer.id }
+            );
         },
         onSuccess: invalidateDynamicData,
         onError: (error) => {
@@ -397,7 +571,7 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
 
     return (
         <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
                 <h1 style={{ margin: 0 }}>Controller</h1>
                 <span onClick={() => setIsInfoModalOpen(true)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Learn more about this screen">
                     {infoIcon}
@@ -415,7 +589,7 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
                 {playersData && playersData.length > 0 ? (
                     <>
                         <div className="screen-layout-container" style={{ aspectRatio: `${totalWidth} / ${totalHeight}` }}>
-                            {mainFeedExists && filteredPlayersData.map(player => (
+                            {mainFeedExists && playersToRender.map(player => (
                                 <PlayerBox
                                     key={player.id}
                                     player={player}
@@ -425,6 +599,7 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
                                     minX={minX}
                                     minY={minY}
                                     onSelect={setSelectedPlayer}
+                                    onToggleFullscreen={handleToggleFullscreen}
                                     lapCount={lapCount}
                                 />
                             ))}
@@ -435,10 +610,12 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
                             isSpeedometerVisible={isSpeedometerVisible}
                             driverHeaderMode={driverHeaderMode}
                             isLive={isLive}
+                            mainFeedId={mainFeed?.id ?? null}
                             onSync={() => syncMutation.mutate()}
                             onToggleMasterPause={handleToggleMasterPause}
                             onToggleSpeedometer={handleToggleSpeedometer}
                             onToggleDriverHeaderMode={handleToggleDriverHeaderMode}
+                            onSeek={handleSeek}
                         />
                     </>
                 ) : (
@@ -452,13 +629,13 @@ const ControllerScreen: React.FC<ControllerScreenProps> = ({ playersData, driver
             <PlayerModal
                 player={selectedPlayer}
                 driverList={driverListData}
-                isLive={isLive}
+                timingData={timingData}
+                teamStandings={teamStandings}
                 onClose={() => setSelectedPlayer(null)}
                 onToggleFullscreen={handleToggleFullscreen}
                 onToggleMute={handleToggleMute}
                 onVolumeChange={handleVolumeChange}
                 onDriverSwitch={(tla) => driverSwitchMutation.mutate(tla)}
-                onSeek={handleSeek}
             />
             <Modal
                 isOpen={isInfoModalOpen}

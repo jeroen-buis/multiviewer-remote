@@ -33,17 +33,14 @@ export const UserPlaceholderIcon = () => (
 );
 export const SpeedometerIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 12m-10 0a10 10 0 1 0 20 0a10 10 0 1 0 -20 0" />
-        <path d="M12 12l0 6" />
-        <path d="M16 16l-3 -3" />
+        <path d="M3 18 A9 9 0 0 1 21 18" />
+        <line x1="12" y1="18" x2="17" y2="11" />
+        <circle cx="12" cy="18" r="1.25" fill="currentColor" stroke="none" />
     </svg>
 );
 export const HeaderIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M13 5H21"/>
-      <path d="M13 9H21"/>
-      <path d="M13 13H21"/>
-      <path d="M13 17H21"/>
-      <rect x="3" y="4" width="6" height="16" rx="2"/>
+      <rect x="2" y="4" width="20" height="16" rx="2"/>
+      <rect x="5" y="7" width="6" height="5" rx="1" fill="currentColor" stroke="none"/>
     </svg>
 );
