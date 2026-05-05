@@ -84,6 +84,7 @@ const StandingsScreen: React.FC<StandingsScreenProps> = ({ f1LiveTimingState }) 
   );
 
   const renderDrivers = () => (
+    <div className="standings-table-scroll">
     <div className="standings-table">
       <div className="standings-table__head">
         <div className="standings-table__cell standings-table__cell--pos">Pos</div>
@@ -119,9 +120,11 @@ const StandingsScreen: React.FC<StandingsScreenProps> = ({ f1LiveTimingState }) 
         );
       })}
     </div>
+    </div>
   );
 
   const renderTeams = () => (
+    <div className="standings-table-scroll">
     <div className="standings-table">
       <div className="standings-table__head">
         <div className="standings-table__cell standings-table__cell--pos">Pos</div>
@@ -147,6 +150,7 @@ const StandingsScreen: React.FC<StandingsScreenProps> = ({ f1LiveTimingState }) 
           </div>
         </div>
       ))}
+    </div>
     </div>
   );
 

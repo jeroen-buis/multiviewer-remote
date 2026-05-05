@@ -127,16 +127,30 @@ p {
   color: var(--sidebar-active-link-bg);
   border-bottom-color: var(--sidebar-active-link-bg);
 }
+.standings-table-scroll {
+  /* Allows the inner table to scroll horizontally on narrow screens (mobile) instead
+     of overflowing the surrounding card. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 -0.5rem; /* let scroll area extend slightly past the card's inner padding */
+}
 .standings-table {
-  display: flex;
-  flex-direction: column;
+  /* Single grid with subgrid rows — without subgrid, each row is an independent grid
+     and the 1fr column resolves to a different width based on each row's own content
+     (e.g., the HEAD row's "Driver" is much shorter than the data rows' driver names),
+     so columns drift out of alignment. Subgrid makes every row share the parent's
+     column tracks, locking columns into perfect vertical alignment. */
+  display: grid;
+  grid-template-columns: 60px 70px 1fr 90px 90px 70px;
+  column-gap: 0.5rem;
+  min-width: 560px;
 }
 .standings-table__head,
 .standings-table__row {
   display: grid;
-  grid-template-columns: 60px 70px 1fr 90px 90px 70px;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
   align-items: center;
-  gap: 0.5rem;
   padding: 0.6rem 0.5rem;
   border-bottom: 1px solid var(--border-color);
 }
@@ -166,7 +180,11 @@ p {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  min-width: 0;
+  /* No min-width: 0 — letting the cell size to its content (including the nowrap
+     driver fullname) means the 1fr column always has at least min-content width,
+     so it can't collapse and let neighbouring columns overlap. The .standings-table
+     min-width plus the wrapping .standings-table-scroll handle narrow viewports
+     by enabling horizontal scroll. */
 }
 .standings-table__team-bar {
   display: inline-block;
